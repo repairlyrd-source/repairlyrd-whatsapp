@@ -8,7 +8,7 @@ app.use(express.json({ limit: '10mb' }));
 
 // Configurar timeout del servidor para Railway
 app.use((req, res, next) => {
-    res.setTimeout(30000, () => {
+    res.setTimeout(120000, () => {
         console.error('Request timeout');
         res.status(504).json({
             success: false,
@@ -169,13 +169,13 @@ app.post('/send', async (req, res) => {
             console.log('Enviando mensaje a:', chatId);
             console.log('Tiempo antes de enviar:', Date.now() - startTime, 'ms');
 
-            // Reducir timeout a 30 segundos para evitar timeout de Railway
+            // Aumentar timeout a 90 segundos para dar tiempo a WhatsApp
             const result = await Promise.race([
 
                 client.sendMessage(chatId, message),
 
                 new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Timeout enviando mensaje')), 30000)
+                    setTimeout(() => reject(new Error('Timeout enviando mensaje')), 90000)
                 )
 
             ]);
