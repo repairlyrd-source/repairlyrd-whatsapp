@@ -135,96 +135,95 @@ app.get('/status', (req, res) => {
 
 });
 
+// Endpoint GET para pruebas (solo para debug)
+app.get('/send', (req, res) => {
+
+    res.json({
+        message: 'Este endpoint solo acepta solicitudes POST',
+        usage: {
+            method: 'POST',
+            url: '/send',
+            body: {
+                number: '1234567890',
+                message: 'tu mensaje'
+            }
+        }
+    });
+
+});
+
 app.post('/send', async (req, res) => {
 
-    const startTime = Date.now();
-    const maxRetries = 3;
-    let retryCount = 0;
+    const { number, message } = req.body;
 
-    const sendWithRetry = async () => {
-        try {
-
-            console.log('=== Iniciando envío de mensaje ===');
-            console.log('Estado del cliente:', isClientReady);
-
-            if (!isClientReady) {
-
-                console.log('Cliente no está listo');
-                throw new Error('WhatsApp no está listo');
-
-            }
-
-            const { number, message } = req.body;
-
-            if (!number || !message) {
-
-                throw new Error('Número y mensaje requeridos');
-
-            }
-
-            const cleanNumber = number.toString().replace(/\D/g, '');
-
-            const chatId = cleanNumber + '@c.us';
-
-            console.log('Enviando mensaje a:', chatId);
-            console.log('Tiempo antes de enviar:', Date.now() - startTime, 'ms');
-
-            // Aumentar timeout a 90 segundos para dar tiempo a WhatsApp
-            const result = await Promise.race([
-
-                client.sendMessage(chatId, message),
-
-                new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Timeout enviando mensaje')), 90000)
-                )
-
-            ]);
-
-            console.log('Mensaje enviado exitosamente');
-            console.log('Tiempo total:', Date.now() - startTime, 'ms');
-
-            return result;
-
-        } catch (error) {
-
-            console.error('ERROR en envío de mensaje:', error);
-            console.error('Tiempo total hasta error:', Date.now() - startTime, 'ms');
-
-            // Si es error de frame detached, intentar reconectar y reintentar
-            if (error.message.includes('detached Frame') && retryCount < maxRetries) {
-                retryCount++;
-                console.log(`Error de frame detectado. Reintentando (${retryCount}/${maxRetries})...`);
-
-                // Marcar cliente como no listo
-                isClientReady = false;
-
-                // Esperar un momento y reintentar
-                await new Promise(resolve => setTimeout(resolve, 2000));
-
-                return sendWithRetry();
-            }
-
-            throw error;
-        }
-    };
-
-    try {
-
-        const result = await sendWithRetry();
-
-        return res.json({
-            success: true,
-            data: result.id.id
-        });
-
-    } catch (error) {
-
-        return res.status(500).json({
+    // Validar entrada inmediatamente
+    if (!number || !message) {
+        return res.status(400).json({
             success: false,
-            error: error.message
+            error: 'Número y mensaje requeridos'
         });
-
     }
+
+    // Verificar si el cliente está listo
+    if (!isClientReady) {
+        return res.status(503).json({
+            success: false,
+            error: 'WhatsApp no está listo'
+        });
+    }
+
+    // Retornar respuesta inmediatamente (fire and forget)
+    res.json({
+        success: true,
+        message: 'Mensaje en cola para envío'
+    });
+
+    // Enviar mensaje en background
+    setImmediate(async () => {
+        const startTime = Date.now();
+        const maxRetries = 3;
+        let retryCount = 0;
+
+        const sendWithRetry = async () => {
+            try {
+                const cleanNumber = number.toString().replace(/\D/g, '');
+                const chatId = cleanNumber + '@c.us';
+
+                console.log('=== Enviando mensaje en background ===');
+                console.log('Enviando mensaje a:', chatId);
+                console.log('Tiempo antes de enviar:', Date.now() - startTime, 'ms');
+
+                // Timeout de 90 segundos para el envío en background
+                const result = await Promise.race([
+                    client.sendMessage(chatId, message),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Timeout enviando mensaje')), 90000)
+                    )
+                ]);
+
+                console.log('Mensaje enviado exitosamente en background');
+                console.log('Tiempo total:', Date.now() - startTime, 'ms');
+
+            } catch (error) {
+                console.error('ERROR en envío de mensaje (background):', error);
+                console.error('Tiempo total hasta error:', Date.now() - startTime, 'ms');
+
+                // Si es error de frame detached, intentar reconectar y reintentar
+                if (error.message.includes('detached Frame') && retryCount < maxRetries) {
+                    retryCount++;
+                    console.log(`Error de frame detectado. Reintentando (${retryCount}/${maxRetries})...`);
+
+                    isClientReady = false;
+
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+
+                    return sendWithRetry();
+                }
+            }
+        };
+
+        await sendWithRetry();
+    });
 
 });
 
