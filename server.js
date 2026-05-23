@@ -9,11 +9,13 @@ app.use(express.json());
 let clientReady = false;
 
 const client = new Client({
+
     authStrategy: new LocalAuth({
         dataPath: './session'
     }),
 
     puppeteer: {
+
         headless: true,
 
         args: [
@@ -23,11 +25,10 @@ const client = new Client({
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--single-process',
             '--disable-gpu'
         ],
 
-        protocolTimeout: 120000
+        protocolTimeout: 180000
     }
 });
 
@@ -48,23 +49,37 @@ client.on('authenticated', () => {
 
 });
 
-client.on('ready', () => {
+client.on('ready', async () => {
 
     console.log('WhatsApp conectado!');
+
     clientReady = true;
+
+});
+
+client.on('loading_screen', (percent, message) => {
+
+    console.log('Cargando WhatsApp:', percent, message);
+
+});
+
+client.on('disconnected', async (reason) => {
+
+    console.log('WhatsApp desconectado:', reason);
+
+    clientReady = false;
+
+    console.log('Reiniciando cliente...');
+
+    setTimeout(() => {
+        client.initialize();
+    }, 5000);
 
 });
 
 client.on('auth_failure', msg => {
 
     console.error('Error de autenticación:', msg);
-
-});
-
-client.on('disconnected', reason => {
-
-    console.log('WhatsApp desconectado:', reason);
-    clientReady = false;
 
 });
 
@@ -84,7 +99,7 @@ app.post('/send', async (req, res) => {
 
             return res.status(503).json({
                 success: false,
-                error: 'WhatsApp no está listo todavía'
+                error: 'WhatsApp aún no está listo'
             });
 
         }
@@ -108,13 +123,16 @@ app.post('/send', async (req, res) => {
 
         console.log('Enviando mensaje a:', chatId);
 
-        await client.sendMessage(chatId, message);
+        // Espera antes de enviar
+        await new Promise(resolve => setTimeout(resolve, 3000));
 
-        console.log('Mensaje enviado correctamente');
+        const sentMessage = await client.sendMessage(chatId, message);
+
+        console.log('Mensaje enviado');
 
         return res.json({
             success: true,
-            message: 'Mensaje enviado'
+            id: sentMessage.id.id
         });
 
     } catch (error) {
