@@ -1,72 +1,45 @@
 const express = require('express');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const QRCode = require('qrcode');
-const fs = require('fs');
 
 const app = express();
 
 app.use(express.json());
 
-// ELIMINA SESIÓN PARA GENERAR NUEVO QR
-const sessionPath = './.wwebjs_auth';
-
-if (fs.existsSync(sessionPath)) {
-
-    fs.rmSync(sessionPath, {
-        recursive: true,
-        force: true
-    });
-
-    console.log('Sesión anterior eliminada');
-
-}
+let clientReady = false;
 
 const client = new Client({
-
-    authStrategy: new LocalAuth(),
+    authStrategy: new LocalAuth({
+        dataPath: './session'
+    }),
 
     puppeteer: {
-
         headless: true,
 
-        executablePath: '/usr/bin/google-chrome',
-
         args: [
-
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
+            '--single-process',
             '--disable-gpu'
-
         ],
 
         protocolTimeout: 120000
-
     }
-
 });
-
-// EVENTOS
 
 client.on('qr', async (qr) => {
 
-    console.log('==============================');
-    console.log('ESCANEA ESTE QR EN WHATSAPP');
-    console.log('==============================');
+    console.log('====================');
+    console.log('ESCANEA EL QR');
+    console.log('====================');
 
     const qrImage = await QRCode.toDataURL(qr);
 
     console.log(qrImage);
-
-});
-
-client.on('loading_screen', (percent, message) => {
-
-    console.log('Cargando WhatsApp:', percent, message);
-
 });
 
 client.on('authenticated', () => {
@@ -78,6 +51,7 @@ client.on('authenticated', () => {
 client.on('ready', () => {
 
     console.log('WhatsApp conectado!');
+    clientReady = true;
 
 });
 
@@ -90,14 +64,11 @@ client.on('auth_failure', msg => {
 client.on('disconnected', reason => {
 
     console.log('WhatsApp desconectado:', reason);
+    clientReady = false;
 
 });
 
-// INICIALIZAR
-
 client.initialize();
-
-// RUTA PRINCIPAL
 
 app.get('/', (req, res) => {
 
@@ -105,66 +76,59 @@ app.get('/', (req, res) => {
 
 });
 
-// ENVIAR MENSAJES
-
 app.post('/send', async (req, res) => {
 
     try {
+
+        if (!clientReady) {
+
+            return res.status(503).json({
+                success: false,
+                error: 'WhatsApp no está listo todavía'
+            });
+
+        }
 
         const { number, message } = req.body;
 
         if (!number || !message) {
 
             return res.status(400).json({
-
                 success: false,
-                error: 'Número y mensaje son requeridos'
-
+                error: 'Número y mensaje requeridos'
             });
 
         }
 
-        // LIMPIA EL NÚMERO
         const cleanNumber = number
             .toString()
             .replace(/\D/g, '');
 
-        // FORMATO WHATSAPP
         const chatId = cleanNumber + '@c.us';
 
         console.log('Enviando mensaje a:', chatId);
 
-        // PEQUEÑA ESPERA PARA ESTABILIDAD
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        await client.sendMessage(chatId, message);
 
-        // ENVÍA MENSAJE
-        const sentMessage = await client.sendMessage(chatId, message);
+        console.log('Mensaje enviado correctamente');
 
-        console.log('Mensaje enviado:', sentMessage.id.id);
-
-        res.json({
-
+        return res.json({
             success: true,
             message: 'Mensaje enviado'
-
         });
 
     } catch (error) {
 
         console.error('ERROR:', error);
 
-        res.status(500).json({
-
+        return res.status(500).json({
             success: false,
             error: error.message
-
         });
 
     }
 
 });
-
-// PUERTO
 
 const PORT = process.env.PORT || 3000;
 
