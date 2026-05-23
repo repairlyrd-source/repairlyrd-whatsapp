@@ -26,10 +26,6 @@ const client = new Client({
             '--no-zygote',
             '--single-process'
         ]
-    },
-
-    webVersionCache: {
-        type: 'remote'
     }
 });
 
