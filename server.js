@@ -21,9 +21,12 @@ const client = new Client({
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--disable-gpu'
+            '--disable-gpu',
+            '--disable-web-resources',
+            '--disable-default-apps'
         ],
-        protocolTimeout: 120000
+        protocolTimeout: 180000,
+        timeout: 60000
     }
 });
 
@@ -126,7 +129,7 @@ app.post('/send', async (req, res) => {
             client.sendMessage(chatId, message),
 
             new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Timeout enviando mensaje')), 15000)
+                setTimeout(() => reject(new Error('Timeout enviando mensaje')), 60000)
             )
 
         ]);
