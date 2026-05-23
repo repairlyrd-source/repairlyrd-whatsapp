@@ -1,15 +1,25 @@
 const express = require('express');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const QRCode = require('qrcode');
+const fs = require('fs');
 
 const app = express();
 
 app.use(express.json());
 
+// FORZAR NUEVO QR
+const sessionPath = './.wwebjs_auth';
+
+if (fs.existsSync(sessionPath)) {
+    fs.rmSync(sessionPath, { recursive: true, force: true });
+    console.log('Sesión anterior eliminada');
+}
+
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
+        executablePath: '/usr/bin/google-chrome',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -26,11 +36,19 @@ const client = new Client({
 
 client.on('qr', async (qr) => {
 
-    console.log('QR generado');
+    console.log('==============================');
+    console.log('ESCANEA ESTE QR EN WHATSAPP');
+    console.log('==============================');
 
     const qrImage = await QRCode.toDataURL(qr);
 
     console.log(qrImage);
+
+});
+
+client.on('loading_screen', (percent, message) => {
+
+    console.log('Cargando WhatsApp:', percent, message);
 
 });
 
@@ -81,15 +99,12 @@ app.post('/send', async (req, res) => {
 
         }
 
-        // Limpia el número
         const cleanNumber = number.toString().replace(/\D/g, '');
 
-        // Formato WhatsApp
         const chatId = cleanNumber + '@c.us';
 
         console.log('Enviando mensaje a:', chatId);
 
-        // Verifica si existe en WhatsApp
         const isRegistered = await client.isRegisteredUser(chatId);
 
         if (!isRegistered) {
@@ -101,10 +116,11 @@ app.post('/send', async (req, res) => {
 
         }
 
-        // Envía el mensaje
-        await client.sendMessage(chatId, message);
+        await new Promise(resolve => setTimeout(resolve, 2000));
 
-        console.log('Mensaje enviado correctamente');
+        const sentMessage = await client.sendMessage(chatId, message);
+
+        console.log('Mensaje enviado:', sentMessage.id.id);
 
         res.json({
             success: true,
