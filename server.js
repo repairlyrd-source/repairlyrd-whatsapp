@@ -4,7 +4,7 @@ const QRCode = require('qrcode');
 
 const app = express();
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 // Configurar timeout del servidor para Railway
 app.use((req, res, next) => {
@@ -14,6 +14,24 @@ app.use((req, res, next) => {
             success: false,
             error: 'Request timeout'
         });
+    });
+    next();
+});
+
+// Limitar concurrent requests
+let activeRequests = 0;
+const MAX_CONCURRENT_REQUESTS = 3;
+
+app.use((req, res, next) => {
+    if (activeRequests >= MAX_CONCURRENT_REQUESTS) {
+        return res.status(429).json({
+            success: false,
+            error: 'Too many requests. Please try again later.'
+        });
+    }
+    activeRequests++;
+    res.on('finish', () => {
+        activeRequests--;
     });
     next();
 });
@@ -74,6 +92,8 @@ client.on('ready', async () => {
     isClientReady = true;
 
     console.log('Estado del cliente:', isClientReady);
+
+    console.log('Memoria usada:', process.memoryUsage());
 
 });
 
@@ -209,6 +229,17 @@ app.post('/send', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 8080;
+
+// Manejo global de errores no capturados
+process.on('uncaughtException', (error) => {
+    console.error('UNCAUGHT EXCEPTION:', error);
+    // No matar el proceso, solo loggear el error
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('UNHANDLED REJECTION:', reason);
+    // No matar el proceso, solo loggear el error
+});
 
 app.listen(PORT, () => {
 
