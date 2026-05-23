@@ -99,7 +99,7 @@ app.post('/send', async (req, res) => {
 
             return res.status(503).json({
                 success: false,
-                error: 'WhatsApp todavía está cargando'
+                error: 'WhatsApp no está listo'
             });
 
         }
@@ -121,20 +121,28 @@ app.post('/send', async (req, res) => {
 
         console.log('Enviando mensaje a:', chatId);
 
-        await client.sendMessage(chatId, message);
+        const result = await Promise.race([
 
-        console.log('Mensaje enviado correctamente');
+            client.sendMessage(chatId, message),
 
-        res.json({
+            new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Timeout enviando mensaje')), 15000)
+            )
+
+        ]);
+
+        console.log('Mensaje enviado');
+
+        return res.json({
             success: true,
-            message: 'Mensaje enviado correctamente'
+            data: result.id.id
         });
 
     } catch (error) {
 
         console.error('ERROR:', error);
 
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
             error: error.message
         });
