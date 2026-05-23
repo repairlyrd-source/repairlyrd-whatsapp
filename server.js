@@ -27,6 +27,10 @@ client.on('ready', () => {
 
 client.initialize();
 
+app.get('/', (req, res) => {
+    res.send('WhatsApp Service Online 🚀');
+});
+
 app.post('/send', async (req, res) => {
     try {
         const { number, message } = req.body;
