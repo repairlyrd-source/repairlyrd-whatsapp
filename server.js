@@ -6,25 +6,22 @@ const app = express();
 
 app.use(express.json());
 
-let clientReady = false;
-let lastQr = null;
+let qrCodeBase64 = null;
+let isReady = false;
 
 const client = new Client({
     authStrategy: new LocalAuth({
-        clientId: "repairly-session"
+        clientId: 'repairlyrd'
     }),
-
     puppeteer: {
         headless: true,
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
             '--disable-gpu',
             '--no-first-run',
-            '--no-zygote',
-            '--single-process'
+            '--no-zygote'
         ]
     }
 });
@@ -35,49 +32,31 @@ client.on('qr', async (qr) => {
     console.log('ESCANEA EL QR');
     console.log('====================');
 
-    lastQr = await QRCode.toDataURL(qr);
+    qrCodeBase64 = await QRCode.toDataURL(qr);
 
-    console.log(lastQr);
+    console.log(qrCodeBase64);
+
 });
 
 client.on('ready', () => {
 
-    clientReady = true;
-
     console.log('WhatsApp conectado!');
+    isReady = true;
+
 });
 
 client.on('authenticated', () => {
 
     console.log('WhatsApp autenticado');
+
 });
 
-client.on('auth_failure', (msg) => {
-
-    clientReady = false;
-
-    console.error('Error autenticando:', msg);
-});
-
-client.on('disconnected', async (reason) => {
-
-    clientReady = false;
+client.on('disconnected', (reason) => {
 
     console.log('WhatsApp desconectado:', reason);
 
-    console.log('Reiniciando cliente...');
+    isReady = false;
 
-    try {
-
-        await client.destroy();
-
-    } catch (e) {}
-
-    setTimeout(() => {
-
-        client.initialize();
-
-    }, 5000);
 });
 
 client.initialize();
@@ -85,27 +64,46 @@ client.initialize();
 app.get('/', (req, res) => {
 
     res.send('WhatsApp Service Online 🚀');
+
 });
 
 app.get('/qr', (req, res) => {
 
-    if (!lastQr) {
-
-        return res.send('QR no disponible todavía');
+    if (!qrCodeBase64) {
+        return res.send('QR no generado todavía');
     }
 
     res.send(`
         <html>
-            <body style="display:flex;justify-content:center;align-items:center;height:100vh;background:#111;">
-                <img src="${lastQr}" width="350" />
+            <body style="text-align:center;font-family:Arial">
+                <h1>Escanea el QR</h1>
+                <img src="${qrCodeBase64}" />
             </body>
         </html>
     `);
+
+});
+
+app.get('/status', (req, res) => {
+
+    res.json({
+        ready: isReady
+    });
+
 });
 
 app.post('/send', async (req, res) => {
 
     try {
+
+        if (!isReady) {
+
+            return res.status(500).json({
+                success: false,
+                error: 'WhatsApp no conectado'
+            });
+
+        }
 
         const { number, message } = req.body;
 
@@ -115,14 +113,7 @@ app.post('/send', async (req, res) => {
                 success: false,
                 error: 'Número y mensaje requeridos'
             });
-        }
 
-        if (!clientReady) {
-
-            return res.status(500).json({
-                success: false,
-                error: 'WhatsApp no está listo'
-            });
         }
 
         const cleanNumber = number.toString().replace(/\D/g, '');
@@ -131,26 +122,26 @@ app.post('/send', async (req, res) => {
 
         console.log('Enviando mensaje a:', chatId);
 
-        await client.sendMessage(chatId, message);
+        const response = await client.sendMessage(chatId, message);
 
-        console.log('Mensaje enviado correctamente');
+        console.log('Mensaje enviado');
 
-        return res.json({
+        res.json({
             success: true,
-            message: 'Mensaje enviado'
+            id: response.id.id
         });
 
     } catch (error) {
 
         console.error('ERROR:', error);
 
-        clientReady = false;
-
-        return res.status(500).json({
+        res.status(500).json({
             success: false,
             error: error.message
         });
+
     }
+
 });
 
 const PORT = process.env.PORT || 3000;
@@ -158,4 +149,5 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
 
     console.log('Servidor iniciado en puerto ' + PORT);
+
 });
