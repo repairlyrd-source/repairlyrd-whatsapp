@@ -21,9 +21,14 @@ const client = new Client({
             '--disable-dev-shm-usage',
             '--disable-gpu',
             '--no-first-run',
-            '--no-zygote'
+            '--no-zygote',
+            '--single-process'
         ]
     }
+});
+
+client.on('loading_screen', (percent, message) => {
+    console.log('Cargando WhatsApp:', percent, message);
 });
 
 client.on('qr', async (qr) => {
@@ -36,11 +41,14 @@ client.on('qr', async (qr) => {
 
     console.log(qrCodeBase64);
 
+    isReady = false;
+
 });
 
-client.on('ready', () => {
+client.on('ready', async () => {
 
     console.log('WhatsApp conectado!');
+
     isReady = true;
 
 });
@@ -51,7 +59,15 @@ client.on('authenticated', () => {
 
 });
 
-client.on('disconnected', (reason) => {
+client.on('auth_failure', msg => {
+
+    console.log('AUTH FAILURE:', msg);
+
+    isReady = false;
+
+});
+
+client.on('disconnected', reason => {
 
     console.log('WhatsApp desconectado:', reason);
 
@@ -59,36 +75,37 @@ client.on('disconnected', (reason) => {
 
 });
 
-client.initialize();
-
 app.get('/', (req, res) => {
 
     res.send('WhatsApp Service Online 🚀');
 
 });
 
+app.get('/status', async (req, res) => {
+
+    res.json({
+        ready: isReady,
+        qrAvailable: !!qrCodeBase64
+    });
+
+});
+
 app.get('/qr', (req, res) => {
 
     if (!qrCodeBase64) {
+
         return res.send('QR no generado todavía');
+
     }
 
     res.send(`
         <html>
-            <body style="text-align:center;font-family:Arial">
+            <body style="background:#111;color:white;text-align:center;font-family:Arial">
                 <h1>Escanea el QR</h1>
-                <img src="${qrCodeBase64}" />
+                <img src="${qrCodeBase64}" style="width:300px"/>
             </body>
         </html>
     `);
-
-});
-
-app.get('/status', (req, res) => {
-
-    res.json({
-        ready: isReady
-    });
 
 });
 
@@ -124,7 +141,7 @@ app.post('/send', async (req, res) => {
 
         const response = await client.sendMessage(chatId, message);
 
-        console.log('Mensaje enviado');
+        console.log('Mensaje enviado correctamente');
 
         res.json({
             success: true,
@@ -151,3 +168,5 @@ app.listen(PORT, () => {
     console.log('Servidor iniciado en puerto ' + PORT);
 
 });
+
+client.initialize();

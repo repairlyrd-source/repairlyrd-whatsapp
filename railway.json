@@ -1,0 +1,11 @@
+{
+  "build": {
+    "builder": "NIXPACKS"
+  },
+  "deploy": {
+    "healthcheckPath": "/status",
+    "healthcheckTimeout": 30,
+    "restartPolicyType": "ON_FAILURE",
+    "numReplicas": 1
+  }
+}
