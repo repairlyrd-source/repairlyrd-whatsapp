@@ -6,18 +6,14 @@ const app = express();
 
 app.use(express.json());
 
-let clientReady = false;
+let isClientReady = false;
 
 const client = new Client({
-
     authStrategy: new LocalAuth({
-        dataPath: './session'
+        clientId: "main-session"
     }),
-
     puppeteer: {
-
         headless: true,
-
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -27,8 +23,7 @@ const client = new Client({
             '--no-zygote',
             '--disable-gpu'
         ],
-
-        protocolTimeout: 180000
+        protocolTimeout: 120000
     }
 });
 
@@ -41,6 +36,13 @@ client.on('qr', async (qr) => {
     const qrImage = await QRCode.toDataURL(qr);
 
     console.log(qrImage);
+
+});
+
+client.on('loading_screen', (percent, message) => {
+
+    console.log('Cargando WhatsApp:', percent, message);
+
 });
 
 client.on('authenticated', () => {
@@ -53,33 +55,23 @@ client.on('ready', async () => {
 
     console.log('WhatsApp conectado!');
 
-    clientReady = true;
-
-});
-
-client.on('loading_screen', (percent, message) => {
-
-    console.log('Cargando WhatsApp:', percent, message);
-
-});
-
-client.on('disconnected', async (reason) => {
-
-    console.log('WhatsApp desconectado:', reason);
-
-    clientReady = false;
-
-    console.log('Reiniciando cliente...');
-
-    setTimeout(() => {
-        client.initialize();
-    }, 5000);
+    isClientReady = true;
 
 });
 
 client.on('auth_failure', msg => {
 
     console.error('Error de autenticación:', msg);
+
+    isClientReady = false;
+
+});
+
+client.on('disconnected', reason => {
+
+    console.log('WhatsApp desconectado:', reason);
+
+    isClientReady = false;
 
 });
 
@@ -91,15 +83,23 @@ app.get('/', (req, res) => {
 
 });
 
+app.get('/status', (req, res) => {
+
+    res.json({
+        ready: isClientReady
+    });
+
+});
+
 app.post('/send', async (req, res) => {
 
     try {
 
-        if (!clientReady) {
+        if (!isClientReady) {
 
             return res.status(503).json({
                 success: false,
-                error: 'WhatsApp aún no está listo'
+                error: 'WhatsApp todavía está cargando'
             });
 
         }
@@ -115,31 +115,26 @@ app.post('/send', async (req, res) => {
 
         }
 
-        const cleanNumber = number
-            .toString()
-            .replace(/\D/g, '');
+        const cleanNumber = number.toString().replace(/\D/g, '');
 
         const chatId = cleanNumber + '@c.us';
 
         console.log('Enviando mensaje a:', chatId);
 
-        // Espera antes de enviar
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        await client.sendMessage(chatId, message);
 
-        const sentMessage = await client.sendMessage(chatId, message);
+        console.log('Mensaje enviado correctamente');
 
-        console.log('Mensaje enviado');
-
-        return res.json({
+        res.json({
             success: true,
-            id: sentMessage.id.id
+            message: 'Mensaje enviado correctamente'
         });
 
     } catch (error) {
 
         console.error('ERROR:', error);
 
-        return res.status(500).json({
+        res.status(500).json({
             success: false,
             error: error.message
         });
