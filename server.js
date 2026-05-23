@@ -4,60 +4,33 @@ const QRCode = require('qrcode');
 
 const app = express();
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json());
 
-// Configurar timeout del servidor para Railway
-app.use((req, res, next) => {
-    res.setTimeout(120000, () => {
-        console.error('Request timeout');
-        res.status(504).json({
-            success: false,
-            error: 'Request timeout'
-        });
-    });
-    next();
-});
-
-// Limitar concurrent requests
-let activeRequests = 0;
-const MAX_CONCURRENT_REQUESTS = 3;
-
-app.use((req, res, next) => {
-    if (activeRequests >= MAX_CONCURRENT_REQUESTS) {
-        return res.status(429).json({
-            success: false,
-            error: 'Too many requests. Please try again later.'
-        });
-    }
-    activeRequests++;
-    res.on('finish', () => {
-        activeRequests--;
-    });
-    next();
-});
-
-let isClientReady = false;
+let clientReady = false;
+let lastQr = null;
 
 const client = new Client({
     authStrategy: new LocalAuth({
-        clientId: "main-session"
+        clientId: "repairly-session"
     }),
+
     puppeteer: {
         headless: true,
+        executablePath: '/usr/bin/google-chrome',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-accelerated-2d-canvas',
+            '--disable-gpu',
             '--no-first-run',
             '--no-zygote',
-            '--disable-gpu',
-            '--disable-web-resources',
-            '--disable-default-apps',
-            '--disable-features=IsolateOrigins,site-per-process'
-        ],
-        protocolTimeout: 180000,
-        timeout: 60000
+            '--single-process'
+        ]
+    },
+
+    webVersionCache: {
+        type: 'remote'
     }
 });
 
@@ -67,56 +40,49 @@ client.on('qr', async (qr) => {
     console.log('ESCANEA EL QR');
     console.log('====================');
 
-    const qrImage = await QRCode.toDataURL(qr);
+    lastQr = await QRCode.toDataURL(qr);
 
-    console.log(qrImage);
-
+    console.log(lastQr);
 });
 
-client.on('loading_screen', (percent, message) => {
+client.on('ready', () => {
 
-    console.log('Cargando WhatsApp:', percent, message);
+    clientReady = true;
 
+    console.log('WhatsApp conectado!');
 });
 
 client.on('authenticated', () => {
 
     console.log('WhatsApp autenticado');
-
 });
 
-client.on('ready', async () => {
+client.on('auth_failure', (msg) => {
 
-    console.log('WhatsApp conectado!');
+    clientReady = false;
 
-    isClientReady = true;
-
-    console.log('Estado del cliente:', isClientReady);
-
-    console.log('Memoria usada:', process.memoryUsage());
-
+    console.error('Error autenticando:', msg);
 });
 
-client.on('auth_failure', msg => {
+client.on('disconnected', async (reason) => {
 
-    console.error('Error de autenticación:', msg);
-
-    isClientReady = false;
-
-});
-
-client.on('disconnected', reason => {
+    clientReady = false;
 
     console.log('WhatsApp desconectado:', reason);
 
-    isClientReady = false;
+    console.log('Reiniciando cliente...');
 
-    // Reconectar automáticamente después de 5 segundos
+    try {
+
+        await client.destroy();
+
+    } catch (e) {}
+
     setTimeout(() => {
-        console.log('Intentando reconectar...');
-        client.initialize();
-    }, 5000);
 
+        client.initialize();
+
+    }, 5000);
 });
 
 client.initialize();
@@ -124,124 +90,77 @@ client.initialize();
 app.get('/', (req, res) => {
 
     res.send('WhatsApp Service Online 🚀');
-
 });
 
-app.get('/status', (req, res) => {
+app.get('/qr', (req, res) => {
 
-    res.json({
-        ready: isClientReady
-    });
+    if (!lastQr) {
 
-});
+        return res.send('QR no disponible todavía');
+    }
 
-// Endpoint GET para pruebas (solo para debug)
-app.get('/send', (req, res) => {
-
-    res.json({
-        message: 'Este endpoint solo acepta solicitudes POST',
-        usage: {
-            method: 'POST',
-            url: '/send',
-            body: {
-                number: '1234567890',
-                message: 'tu mensaje'
-            }
-        }
-    });
-
+    res.send(`
+        <html>
+            <body style="display:flex;justify-content:center;align-items:center;height:100vh;background:#111;">
+                <img src="${lastQr}" width="350" />
+            </body>
+        </html>
+    `);
 });
 
 app.post('/send', async (req, res) => {
 
-    const { number, message } = req.body;
+    try {
 
-    // Validar entrada inmediatamente
-    if (!number || !message) {
-        return res.status(400).json({
+        const { number, message } = req.body;
+
+        if (!number || !message) {
+
+            return res.status(400).json({
+                success: false,
+                error: 'Número y mensaje requeridos'
+            });
+        }
+
+        if (!clientReady) {
+
+            return res.status(500).json({
+                success: false,
+                error: 'WhatsApp no está listo'
+            });
+        }
+
+        const cleanNumber = number.toString().replace(/\D/g, '');
+
+        const chatId = cleanNumber + '@c.us';
+
+        console.log('Enviando mensaje a:', chatId);
+
+        await client.sendMessage(chatId, message);
+
+        console.log('Mensaje enviado correctamente');
+
+        return res.json({
+            success: true,
+            message: 'Mensaje enviado'
+        });
+
+    } catch (error) {
+
+        console.error('ERROR:', error);
+
+        clientReady = false;
+
+        return res.status(500).json({
             success: false,
-            error: 'Número y mensaje requeridos'
+            error: error.message
         });
     }
-
-    // Verificar si el cliente está listo
-    if (!isClientReady) {
-        return res.status(503).json({
-            success: false,
-            error: 'WhatsApp no está listo'
-        });
-    }
-
-    // Retornar respuesta inmediatamente (fire and forget)
-    res.json({
-        success: true,
-        message: 'Mensaje en cola para envío'
-    });
-
-    // Enviar mensaje en background
-    setImmediate(async () => {
-        const startTime = Date.now();
-        const maxRetries = 3;
-        let retryCount = 0;
-
-        const sendWithRetry = async () => {
-            try {
-                const cleanNumber = number.toString().replace(/\D/g, '');
-                const chatId = cleanNumber + '@c.us';
-
-                console.log('=== Enviando mensaje en background ===');
-                console.log('Enviando mensaje a:', chatId);
-                console.log('Tiempo antes de enviar:', Date.now() - startTime, 'ms');
-
-                // Timeout de 90 segundos para el envío en background
-                const result = await Promise.race([
-                    client.sendMessage(chatId, message),
-                    new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error('Timeout enviando mensaje')), 90000)
-                    )
-                ]);
-
-                console.log('Mensaje enviado exitosamente en background');
-                console.log('Tiempo total:', Date.now() - startTime, 'ms');
-
-            } catch (error) {
-                console.error('ERROR en envío de mensaje (background):', error);
-                console.error('Tiempo total hasta error:', Date.now() - startTime, 'ms');
-
-                // Si es error de frame detached, intentar reconectar y reintentar
-                if (error.message.includes('detached Frame') && retryCount < maxRetries) {
-                    retryCount++;
-                    console.log(`Error de frame detectado. Reintentando (${retryCount}/${maxRetries})...`);
-
-                    isClientReady = false;
-
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-
-                    return sendWithRetry();
-                }
-            }
-        };
-
-        await sendWithRetry();
-    });
-
 });
 
-const PORT = process.env.PORT || 8080;
-
-// Manejo global de errores no capturados
-process.on('uncaughtException', (error) => {
-    console.error('UNCAUGHT EXCEPTION:', error);
-    // No matar el proceso, solo loggear el error
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('UNHANDLED REJECTION:', reason);
-    // No matar el proceso, solo loggear el error
-});
+const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
 
     console.log('Servidor iniciado en puerto ' + PORT);
-
 });
