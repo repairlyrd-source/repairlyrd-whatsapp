@@ -36,8 +36,7 @@ const client = new Client({
             '--disable-gpu',
             '--disable-web-resources',
             '--disable-default-apps',
-            '--disable-features=IsolateOrigins,site-per-process',
-            '--single-process'
+            '--disable-features=IsolateOrigins,site-per-process'
         ],
         protocolTimeout: 180000,
         timeout: 60000
@@ -92,6 +91,12 @@ client.on('disconnected', reason => {
 
     isClientReady = false;
 
+    // Reconectar automáticamente después de 5 segundos
+    setTimeout(() => {
+        console.log('Intentando reconectar...');
+        client.initialize();
+    }, 5000);
+
 });
 
 client.initialize();
@@ -113,53 +118,79 @@ app.get('/status', (req, res) => {
 app.post('/send', async (req, res) => {
 
     const startTime = Date.now();
+    const maxRetries = 3;
+    let retryCount = 0;
+
+    const sendWithRetry = async () => {
+        try {
+
+            console.log('=== Iniciando envío de mensaje ===');
+            console.log('Estado del cliente:', isClientReady);
+
+            if (!isClientReady) {
+
+                console.log('Cliente no está listo');
+                throw new Error('WhatsApp no está listo');
+
+            }
+
+            const { number, message } = req.body;
+
+            if (!number || !message) {
+
+                throw new Error('Número y mensaje requeridos');
+
+            }
+
+            const cleanNumber = number.toString().replace(/\D/g, '');
+
+            const chatId = cleanNumber + '@c.us';
+
+            console.log('Enviando mensaje a:', chatId);
+            console.log('Tiempo antes de enviar:', Date.now() - startTime, 'ms');
+
+            // Reducir timeout a 30 segundos para evitar timeout de Railway
+            const result = await Promise.race([
+
+                client.sendMessage(chatId, message),
+
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Timeout enviando mensaje')), 30000)
+                )
+
+            ]);
+
+            console.log('Mensaje enviado exitosamente');
+            console.log('Tiempo total:', Date.now() - startTime, 'ms');
+
+            return result;
+
+        } catch (error) {
+
+            console.error('ERROR en envío de mensaje:', error);
+            console.error('Tiempo total hasta error:', Date.now() - startTime, 'ms');
+
+            // Si es error de frame detached, intentar reconectar y reintentar
+            if (error.message.includes('detached Frame') && retryCount < maxRetries) {
+                retryCount++;
+                console.log(`Error de frame detectado. Reintentando (${retryCount}/${maxRetries})...`);
+
+                // Marcar cliente como no listo
+                isClientReady = false;
+
+                // Esperar un momento y reintentar
+                await new Promise(resolve => setTimeout(resolve, 2000));
+
+                return sendWithRetry();
+            }
+
+            throw error;
+        }
+    };
 
     try {
 
-        console.log('=== Iniciando envío de mensaje ===');
-        console.log('Estado del cliente:', isClientReady);
-
-        if (!isClientReady) {
-
-            console.log('Cliente no está listo');
-            return res.status(503).json({
-                success: false,
-                error: 'WhatsApp no está listo'
-            });
-
-        }
-
-        const { number, message } = req.body;
-
-        if (!number || !message) {
-
-            return res.status(400).json({
-                success: false,
-                error: 'Número y mensaje requeridos'
-            });
-
-        }
-
-        const cleanNumber = number.toString().replace(/\D/g, '');
-
-        const chatId = cleanNumber + '@c.us';
-
-        console.log('Enviando mensaje a:', chatId);
-        console.log('Tiempo antes de enviar:', Date.now() - startTime, 'ms');
-
-        // Reducir timeout a 30 segundos para evitar timeout de Railway
-        const result = await Promise.race([
-
-            client.sendMessage(chatId, message),
-
-            new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Timeout enviando mensaje')), 30000)
-            )
-
-        ]);
-
-        console.log('Mensaje enviado exitosamente');
-        console.log('Tiempo total:', Date.now() - startTime, 'ms');
+        const result = await sendWithRetry();
 
         return res.json({
             success: true,
@@ -167,9 +198,6 @@ app.post('/send', async (req, res) => {
         });
 
     } catch (error) {
-
-        console.error('ERROR en envío de mensaje:', error);
-        console.error('Tiempo total hasta error:', Date.now() - startTime, 'ms');
 
         return res.status(500).json({
             success: false,
@@ -180,7 +208,7 @@ app.post('/send', async (req, res) => {
 
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
 
