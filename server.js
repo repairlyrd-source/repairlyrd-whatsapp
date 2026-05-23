@@ -6,6 +6,18 @@ const app = express();
 
 app.use(express.json());
 
+// Configurar timeout del servidor para Railway
+app.use((req, res, next) => {
+    res.setTimeout(30000, () => {
+        console.error('Request timeout');
+        res.status(504).json({
+            success: false,
+            error: 'Request timeout'
+        });
+    });
+    next();
+});
+
 let isClientReady = false;
 
 const client = new Client({
@@ -23,7 +35,9 @@ const client = new Client({
             '--no-zygote',
             '--disable-gpu',
             '--disable-web-resources',
-            '--disable-default-apps'
+            '--disable-default-apps',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--single-process'
         ],
         protocolTimeout: 180000,
         timeout: 60000
@@ -59,6 +73,8 @@ client.on('ready', async () => {
     console.log('WhatsApp conectado!');
 
     isClientReady = true;
+
+    console.log('Estado del cliente:', isClientReady);
 
 });
 
@@ -96,10 +112,16 @@ app.get('/status', (req, res) => {
 
 app.post('/send', async (req, res) => {
 
+    const startTime = Date.now();
+
     try {
+
+        console.log('=== Iniciando envío de mensaje ===');
+        console.log('Estado del cliente:', isClientReady);
 
         if (!isClientReady) {
 
+            console.log('Cliente no está listo');
             return res.status(503).json({
                 success: false,
                 error: 'WhatsApp no está listo'
@@ -123,18 +145,21 @@ app.post('/send', async (req, res) => {
         const chatId = cleanNumber + '@c.us';
 
         console.log('Enviando mensaje a:', chatId);
+        console.log('Tiempo antes de enviar:', Date.now() - startTime, 'ms');
 
+        // Reducir timeout a 30 segundos para evitar timeout de Railway
         const result = await Promise.race([
 
             client.sendMessage(chatId, message),
 
             new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Timeout enviando mensaje')), 60000)
+                setTimeout(() => reject(new Error('Timeout enviando mensaje')), 30000)
             )
 
         ]);
 
-        console.log('Mensaje enviado');
+        console.log('Mensaje enviado exitosamente');
+        console.log('Tiempo total:', Date.now() - startTime, 'ms');
 
         return res.json({
             success: true,
@@ -143,7 +168,8 @@ app.post('/send', async (req, res) => {
 
     } catch (error) {
 
-        console.error('ERROR:', error);
+        console.error('ERROR en envío de mensaje:', error);
+        console.error('Tiempo total hasta error:', Date.now() - startTime, 'ms');
 
         return res.status(500).json({
             success: false,
